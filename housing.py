@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Mon Dec  4 15:38:23 2017
-
-@author: zhongningchen
-"""
-
 import os
 import tarfile
 from six.moves import urllib
 import pandas as pd
 import numpy as np
 import hashlib
-from sklearn.model_selection import StratifiedShuffleSplit as sss
+from sklearn.preprocessing import LabelBinarizer as lb
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.pipeline import FeatureUnion
+from sklearn.preprocessing import Imputer
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 
 DOWNLOAD_ROOT = 'http://raw.githubusercontent.com/ageron/handson-ml/master/'
 HOUSING_PATH = 'datasets/housing'
@@ -28,7 +26,7 @@ def fetch_housing_data(housing_url= HOUSING_URL, housing_path = HOUSING_PATH):
     housing_tgz.extractall(path = housing_path)
     housing_tgz.close()
 
-
+#######################################################################################
 
 def load_housing_data(housing_path = HOUSING_PATH):
     #loading the file
@@ -36,7 +34,7 @@ def load_housing_data(housing_path = HOUSING_PATH):
     return pd.read_csv(csv_path)
 
 
-housing = load_housing_data()
+#housing = load_housing_data()
 #creating test set
 #########################################################################################
 
@@ -70,21 +68,71 @@ housing_with_id = housing.reset_index()
 housing_with_id['index'] = housing['longitude']*1000 + housing['latitude']
 housing_with_id = housing_with_id.rename(columns = {'index': 'id'})
 train_set, test_set = split_train_set_by_id(data= housing_with_id, test_ratio = .2, id_column = 'id')
-
 '''
 
 #########################################################################################
-
+'''
 housing["income_cat"] = np.ceil(housing['median_income']/1.5)
 housing['income_cat'].where(housing['income_cat'] < 5, 5.0, inplace = True)
 split = sss(n_splits = 1, test_size = .2, random_state = 42)
 for train_index, test_index in split.split(housing, housing['income_cat']):
     strat_train_set = housing.loc[train_index]
     strat_test_set = housing.loc[test_index]
-    
+
+del housing['income_cat']
+housing.plot(kind = 'scatter', x = 'longitude', y = 'latitude', alpha = .1)
+
+corr_matrix = housing.corr()
+print(corr_matrix['median_house_value'].sort_values(ascending = False))
+
+#spliting housing into x and y, where label ,y, is median housing value
+'''
+hX = strat_train_set.drop('median_house_value', axis = 1)
+hY = strat_train_set['median_house_value'].copy()
 
 
+rooms_ix, bedrooms_ix, population_ix, household_ix =  3,4,5,6
+class CombinedAttributesAdder(BaseEstimator, TransformerMixin):
+    def __init__(self, add_bedrooms_per_room = True):
+        self.add_bedrooms_per_room = add_bedrooms_per_room
+    def fit(self, X, y = None):
+        return self
+    def transform(self, X, y = None):
+        rooms_per_household = X[:, rooms_ix]/X[:, household_ix]
+        population_per_household = X[:, population_ix]/X[:,household_ix]
+        if add_bedrooms_per_room:
+            bedroom_per_room = X[:,bedrooms_ix]/X[:, rooms_ix]
+            return np.c_[X, rooms_per_household, population_per_household, bedroom_per_room]
+        else:
+            return np.c_[X,rooms_per_household, population_per_household] 
 
+class DataFrameSelector(BaseEstimator, TransformerMixin):
+    def __init__(self, attribute_names):
+        self.attribute_names = attribute_names
+    def fit(self, X, y=None):
+        return self
+    def transform(self, X):
+        return X[self.attribute_names].values
+
+housing_num = hX.drop('ocean_proximity', axis = 1)
+num_attribs = list(housing_num)
+cat_attribs = ['ocean_proximity']
+
+num_pipeline = Pipeline([
+            ('selector', DataFrameSelector(num_attribs)),
+            ('imputer', Imputer(strategy = 'median')),
+            ('attribs_adder', CombinedAttributesAdder()),
+            ('std_scaler', StandardScaler())
+        ])
+cat_pipeline = Pipeline([
+            ('selector', DataFrameSelector(cat_attribs)),
+            ('label_binarizer', lb())
+        ])
+
+full_pipeline = FeatureUnion(transformer_list = [
+            ('num_pipeline', num_pipeline),
+            ('cat_pipeline', cat_pipeline)        
+        ])
 
 
 
